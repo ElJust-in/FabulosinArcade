@@ -437,7 +437,7 @@ function update() {
 
   if (state.enemies.length === 0 && !state.over) {
     state.over = true; state.won = true;
-    statusP.textContent = '¡1,2,3... Activos de fragancia! Ahora tienes 24hrs. de fragancia (R reinicia · M menú)';
+    statusP.textContent = '¡1,2,3... Activos! Ahora tienes 24hrs. de fragancia (R reinicia · M menú)';
   } else if (!state.over) {
     statusP.textContent = `Enemigos restantes: ${state.enemies.length}`;
   }
@@ -548,7 +548,7 @@ function draw() {
     ctx.textAlign = 'center';
     if (state.won) {
       ctx.fillStyle = '#f9e79f'; ctx.font = 'bold 44px Arial';
-      ctx.fillText('¡1,2,3... Activos de fragancia!', W / 2, H / 2 - 20);
+      ctx.fillText('¡1,2,3... Activos!', W / 2, H / 2 - 20);
       ctx.fillStyle = '#ffffff'; ctx.font = 'bold 26px Arial';
       ctx.fillText('Ahora tienes 24hrs. de fragancia', W / 2, H / 2 + 22);
     } else {
