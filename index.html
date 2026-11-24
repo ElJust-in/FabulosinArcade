@@ -1,4 +1,4 @@
-<html lang="es" data-type="html" data-identifier="f7c2a9e1-3b4d-4e8a-8f2b-6d1c9a0e5b72" data-title="Fabulosín vs la Mugre" data-version="2" width="800" height="620">
+<html lang="es" data-type="html" data-identifier="f7c2a9e1-3b4d-4e8a-8f2b-6d1c9a0e5b72" data-title="Fabulosín vs la Mugre" data-version="3" width="800" height="620">
 <head>
 <meta charset="UTF-8">
 <title>Fabulosín vs la Mugre</title>
@@ -25,7 +25,7 @@
 <video id="cam" autoplay playsinline muted style="display:none"></video>
 <p id="controls-p">
   <strong>Teclado:</strong> ← → mover · ↑ saltar · Z golpe · X especial (con poder lleno) · S disparo · C defensa · R reiniciar<br>
-  <strong>Manos:</strong> mueve la mano a los lados para desplazarte · mano arriba = saltar · puño = golpe · pellizco (pulgar + índice) = disparo · dos puños = cargar poder · dos manos abiertas = lanzar especial
+  <strong>Manos:</strong> mano a los lados = desplazarte · mano arriba = saltar · puño = golpe · pellizco (pulgar + índice) = disparo · mano abierta sostenida = defensa · dos puños = cargar poder · dos manos abiertas = lanzar especial
 </p>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
@@ -42,7 +42,15 @@ const FILES = {
   derrame_idle: 'derrame_idle.png', derrame_salto: 'derrame_salto.png', derrame_hurt: 'derrame_hurt.png', derrame_ataque: 'derrame_ataque.png'
 };
 const IMG = {};
-for (const k in FILES) { const i = new Image(); i.src = ASSETS + FILES[k]; IMG[k] = i; }
+for (const k in FILES) {
+  const i = new Image();
+  i.onerror = () => console.warn('No se encontró la imagen: ' + ASSETS + FILES[k]);
+  i.src = ASSETS + FILES[k];
+  IMG[k] = i;
+}
+
+const HAND_CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -58,9 +66,10 @@ const ENEMY_CFG = [
 
 let mode = null, state = null;
 const keys = {}, just = {};
-let handIn = { move: 0, charging: false };
+let handIn = { move: 0, charging: false, defend: false };
 let pend = { golpe: false, disparo: false, especial: false, jump: false };
 let prev = { fist: false, open: false, pinch: false, jump: false };
+let lastHands = null, gestureText = '';
 
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
@@ -121,21 +130,23 @@ function startHand() {
   });
 }
 
-function isFist(lm) {
-  const up = [[8,6],[12,10],[16,14],[20,18]].filter(([t,p]) => lm[t].y < lm[p].y).length;
-  return up <= 1;
+function countUp(lm) {
+  return [[8,6],[12,10],[16,14],[20,18]].filter(([t,p]) => lm[t].y < lm[p].y).length;
 }
-
-function isOpen(lm) {
-  const up = [[8,6],[12,10],[16,14],[20,18]].filter(([t,p]) => lm[t].y < lm[p].y).length;
-  return up >= 4;
-}
+function isFist(lm) { return countUp(lm) <= 1; }
+function isOpen(lm) { return countUp(lm) >= 4; }
 
 function onHands(res) {
   const hs = res.multiHandLandmarks || [];
+  lastHands = hs.length ? hs : null;
   handIn.move = 0;
   handIn.charging = false;
-  if (hs.length === 0) { prev = { fist: false, open: false, pinch: false, jump: false }; return; }
+  handIn.defend = false;
+  if (hs.length === 0) {
+    prev = { fist: false, open: false, pinch: false, jump: false };
+    gestureText = 'Sin manos detectadas';
+    return;
+  }
   const main = hs[0];
 
   // Movimiento lateral (espejo)
@@ -151,33 +162,42 @@ function onHands(res) {
   const opens = hs.map(isOpen);
   const bothFist = hs.length >= 2 && fists[0] && fists[1];
   const bothOpen = hs.length >= 2 && opens[0] && opens[1];
+  const oneOpen = hs.length === 1 && opens[0];
 
   if (bothFist) {
-    // Dos puños: cargando poder especial (mientras los sostengas)
+    // Dos puños: cargando poder especial
     handIn.charging = true;
     prev.fist = false; prev.open = false;
+    gestureText = 'Dos puños: cargando poder';
   } else if (bothOpen) {
     // Dos manos abiertas: lanzar especial (solo al abrirlas)
     if (!prev.open) pend.especial = true;
     prev.open = true; prev.fist = false;
+    gestureText = 'Dos manos abiertas: ¡ESPECIAL!';
+  } else if (oneOpen) {
+    // Una mano abierta sostenida: defensa
+    handIn.defend = true;
+    prev.open = false; prev.fist = false;
+    gestureText = 'Mano abierta: defensa';
   } else {
     // Un puño: golpe básico
     prev.open = false;
     if (fists[0] && !prev.fist) pend.golpe = true;
     prev.fist = fists[0];
+    gestureText = fists[0] ? 'Puño: golpe' : 'Mano en movimiento';
   }
 
   // Pellizco (pulgar + índice): disparo
   const d = Math.hypot(main[4].x - main[8].x, main[4].y - main[8].y);
   const pinch = d < 0.05 && !fists[0];
-  if (pinch && !prev.pinch) pend.disparo = true;
+  if (pinch && !prev.pinch) { pend.disparo = true; gestureText = 'Pellizco: disparo'; }
   prev.pinch = pinch;
 }
 
 function getControls() {
   if (mode === 'hand') {
     const c = { l: handIn.move < 0, r: handIn.move > 0, jump: pend.jump, golpe: pend.golpe,
-                especial: pend.especial, disparo: pend.disparo, def: false, holdX: handIn.charging };
+                especial: pend.especial, disparo: pend.disparo, def: handIn.defend, holdX: handIn.charging };
     pend = { golpe: false, disparo: false, especial: false, jump: false };
     return c;
   }
@@ -206,9 +226,10 @@ function hurtEnemy(e, d) {
 
 function damageFab(d) {
   const f = state.fab;
-  if (f.defending) d *= 0.5;
+  // Si está defendiendo en el momento del golpe, casi todo el daño se bloquea
+  if (f.defending) d = d * 0.1;
   f.hp = Math.max(0, f.hp - d);
-  f.hit = 10;
+  if (!f.defending) f.hit = 10;
   if (f.hp <= 0) {
     state.over = true; state.won = false;
     statusP.textContent = '¡La mugre te ganó esta vez! (pulsa R o Reiniciar)';
@@ -346,7 +367,7 @@ function drawHUD() {
   ctx.fillStyle = '#fff'; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'left';
   ctx.fillText('Fabulosín', 20, 18);
   drawBar(20, 24, 260, f.hp, f.max, '#a569bd');
-  ctx.fillText(f.power >= 100 ? 'Poder: LISTO (abre las manos / X)' : 'Poder', 20, 56);
+  ctx.fillText(f.power >= 100 ? 'Poder: LISTO (manos abiertas / X)' : 'Poder', 20, 56);
   drawBar(20, 62, 260, f.power, 100, '#f4d03f');
   ctx.textAlign = 'right';
   ctx.fillText('Mugre', W - 20, 18);
@@ -357,15 +378,46 @@ function drawHUD() {
   ctx.textAlign = 'left';
 }
 
+// Cámara con puntos y líneas de las manos
 function drawPreview() {
-  if (mode === 'hand' && video.readyState >= 2) {
-    ctx.save();
-    ctx.globalAlpha = 0.85;
-    ctx.translate(170, H - 130);
-    ctx.scale(-1, 1);
-    ctx.drawImage(video, 0, 0, 160, 120);
-    ctx.restore();
+  if (mode !== 'hand' || video.readyState < 2) return;
+  const pw = 200, ph = 150, px = 10, py = H - ph - 10;
+
+  ctx.save();
+  // Video espejado
+  ctx.save();
+  ctx.translate(px + pw, py);
+  ctx.scale(-1, 1);
+  ctx.drawImage(video, 0, 0, pw, ph);
+  ctx.restore();
+
+  ctx.strokeStyle = '#8e44ad'; ctx.lineWidth = 2;
+  ctx.strokeRect(px, py, pw, ph);
+
+  // Tracking: coordenadas espejadas para coincidir con el video
+  const pt = p => ({ x: px + (1 - p.x) * pw, y: py + p.y * ph });
+  if (lastHands) {
+    lastHands.forEach((lm, hi) => {
+      ctx.strokeStyle = hi === 0 ? '#00e5ff' : '#ffea00';
+      ctx.lineWidth = 2;
+      HAND_CONNECTIONS.forEach(([a, b]) => {
+        const A = pt(lm[a]), B = pt(lm[b]);
+        ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+      });
+      lm.forEach(p => {
+        const q = pt(p);
+        ctx.fillStyle = '#ff4081';
+        ctx.beginPath(); ctx.arc(q.x, q.y, 3, 0, Math.PI * 2); ctx.fill();
+      });
+    });
   }
+
+  // Texto con el gesto detectado
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(px, py + ph - 20, pw, 20);
+  ctx.fillStyle = '#fff'; ctx.font = '12px Arial'; ctx.textAlign = 'left';
+  ctx.fillText(gestureText || 'Buscando manos...', px + 6, py + ph - 6);
+  ctx.restore();
 }
 
 function drawOverlay() {
@@ -394,7 +446,6 @@ function draw() {
 
 function loop() {
   if (state && !state.over) update();
-  // Las teclas "recién pulsadas" se limpian siempre, incluso si el juego terminó
   for (const k in just) delete just[k];
   draw();
   requestAnimationFrame(loop);
