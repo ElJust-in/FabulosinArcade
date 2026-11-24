@@ -1,0 +1,405 @@
+<html lang="es" data-type="html" data-identifier="f7c2a9e1-3b4d-4e8a-8f2b-6d1c9a0e5b72" data-title="Fabulosín vs la Mugre" data-version="2" width="800" height="620">
+<head>
+<meta charset="UTF-8">
+<title>Fabulosín vs la Mugre</title>
+<style>
+  body { margin:0; background:#120a1c; color:#fff; font-family: Arial, sans-serif; text-align:center; }
+  #title-h1 { margin:12px 0 4px; font-size:26px; color:#c39bff; text-shadow:0 0 10px #8e44ad; }
+  #status-p { margin:0 0 8px; font-size:15px; min-height:20px; }
+  #controls-p { margin:8px 0 0; font-size:13px; color:#bba9d6; line-height:1.5; }
+  .menu { margin-bottom:8px; }
+  button { margin:4px; padding:8px 16px; background:#8e44ad; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer; }
+  button:hover { background:#a95bcc; }
+  canvas { border:3px solid #8e44ad; border-radius:8px; display:block; margin:0 auto; }
+</style>
+</head>
+<body>
+<h1 id="title-h1">Fabulosín vs. la Mugre</h1>
+<p id="status-p">Elige un modo de juego</p>
+<div class="menu">
+  <button id="kb-btn">⌨️ Teclado</button>
+  <button id="hand-btn">🖐️ Manos (cámara)</button>
+  <button id="restart-btn">Reiniciar</button>
+</div>
+<canvas id="game" width="800" height="450"></canvas>
+<video id="cam" autoplay playsinline muted style="display:none"></video>
+<p id="controls-p">
+  <strong>Teclado:</strong> ← → mover · ↑ saltar · Z golpe · X especial (con poder lleno) · S disparo · C defensa · R reiniciar<br>
+  <strong>Manos:</strong> mueve la mano a los lados para desplazarte · mano arriba = saltar · puño = golpe · pellizco (pulgar + índice) = disparo · dos puños = cargar poder · dos manos abiertas = lanzar especial
+</p>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script>
+const ASSETS = 'assets/';
+const FILES = {
+  bg: 'background.png',
+  fab_idle: 'fabulosin_idle.png', fab_salto: 'fabulosin_salto.png',
+  fab_golpe: 'fabulosin_golpe_basico.png', fab_especial: 'fabulosin_ataque_especial.png',
+  fab_hurt: 'fabulosin_hurt.png', fab_disparo: 'fabulosin_disparo.png',
+  fab_defensa: 'fabulosin_defensa.png', fab_cargando: 'fabulosin_cargando_poder_especial.png',
+  Lodo_idle: 'Lodo_idle.png', Lodo_salto: 'Lodo_salto.png', Lodo_hurt: 'Lodo_hurt.png', Lodo_ataque: 'Lodo_ataque.png',
+  huellas_idle: 'huellas_idle.png', huellas_salto: 'huellas_salto.png', huellas_hurt: 'huellas_hurt.png', huellas_ataque: 'huellas_ataque.png',
+  derrame_idle: 'derrame_idle.png', derrame_salto: 'derrame_salto.png', derrame_hurt: 'derrame_hurt.png', derrame_ataque: 'derrame_ataque.png'
+};
+const IMG = {};
+for (const k in FILES) { const i = new Image(); i.src = ASSETS + FILES[k]; IMG[k] = i; }
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const statusP = document.getElementById('status-p');
+const video = document.getElementById('cam');
+const W = 800, H = 450, FLOOR = 380, G = 0.7;
+
+const ENEMY_CFG = [
+  { prefix: 'Lodo',    name: 'Lodo',    hp: 90,  speed: 1.2, dmg: 8,  cdMax: 90, aggr: 0.04, color: '#7a6a2a', x: 520 },
+  { prefix: 'huellas', name: 'Huellas', hp: 90,  speed: 1.6, dmg: 9,  cdMax: 75, aggr: 0.05, color: '#2e6b3a', x: 620 },
+  { prefix: 'derrame', name: 'Derrame', hp: 120, speed: 2.0, dmg: 12, cdMax: 60, aggr: 0.05, color: '#3d3d3d', x: 700 }
+];
+
+let mode = null, state = null;
+const keys = {}, just = {};
+let handIn = { move: 0, charging: false };
+let pend = { golpe: false, disparo: false, especial: false, jump: false };
+let prev = { fist: false, open: false, pinch: false, jump: false };
+
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (!keys[k]) just[k] = true;
+  keys[k] = true;
+  if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
+  if (k === 'r' && mode) reset();
+});
+addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+document.getElementById('kb-btn').addEventListener('click', () => {
+  mode = 'kb'; reset(); statusP.textContent = '⌨️ Modo teclado: ¡a pelear!';
+});
+document.getElementById('hand-btn').addEventListener('click', startHand);
+document.getElementById('restart-btn').addEventListener('click', () => { if (mode) reset(); });
+
+function newFighter(x, prefix, hp) {
+  return { x, y: FLOOR - 150, w: 130, h: 150, vx: 0, vy: 0, onG: true, hp, max: hp, face: 1,
+           prefix, act: 'idle', lock: 0, hit: 0, cd: 0, power: 0,
+           defending: false, cargando: false, pendingHit: 0, cfg: null, range: 100, speed: 0, dmg: 0, cdMax: 0, aggr: 0 };
+}
+
+function reset() {
+  state = {
+    fab: newFighter(120, 'fab', 150),
+    enemies: ENEMY_CFG.map(c => {
+      const e = newFighter(c.x, c.prefix, c.hp);
+      e.cfg = c; e.speed = c.speed; e.dmg = c.dmg; e.cdMax = c.cdMax; e.aggr = c.aggr;
+      return e;
+    }),
+    proj: [], over: false, won: false
+  };
+  statusP.textContent = `Enemigos restantes: ${state.enemies.length}. ¡Los tres atacan a la vez!`;
+}
+
+function startHand() {
+  navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } }).then(async stream => {
+    video.srcObject = stream;
+    await video.play();
+    const hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.5 });
+    hands.onResults(onHands);
+    let busy = false;
+    async function sendFrame() {
+      if (!busy && video.readyState >= 2) {
+        busy = true;
+        await hands.send({ image: video });
+        busy = false;
+      }
+      requestAnimationFrame(sendFrame);
+    }
+    sendFrame();
+    mode = 'hand';
+    reset();
+    statusP.textContent = '🖐️ Modo manos: ¡muestra tus manos a la cámara!';
+  }).catch(() => {
+    statusP.textContent = 'No pude acceder a la cámara. Usa el modo teclado.';
+  });
+}
+
+function isFist(lm) {
+  const up = [[8,6],[12,10],[16,14],[20,18]].filter(([t,p]) => lm[t].y < lm[p].y).length;
+  return up <= 1;
+}
+
+function isOpen(lm) {
+  const up = [[8,6],[12,10],[16,14],[20,18]].filter(([t,p]) => lm[t].y < lm[p].y).length;
+  return up >= 4;
+}
+
+function onHands(res) {
+  const hs = res.multiHandLandmarks || [];
+  handIn.move = 0;
+  handIn.charging = false;
+  if (hs.length === 0) { prev = { fist: false, open: false, pinch: false, jump: false }; return; }
+  const main = hs[0];
+
+  // Movimiento lateral (espejo)
+  const x = 1 - main[8].x;
+  if (x < 0.38) handIn.move = -1; else if (x > 0.62) handIn.move = 1;
+
+  // Salto: mano arriba
+  const jumpNow = main[0].y < 0.3;
+  if (jumpNow && !prev.jump) pend.jump = true;
+  prev.jump = jumpNow;
+
+  const fists = hs.map(isFist);
+  const opens = hs.map(isOpen);
+  const bothFist = hs.length >= 2 && fists[0] && fists[1];
+  const bothOpen = hs.length >= 2 && opens[0] && opens[1];
+
+  if (bothFist) {
+    // Dos puños: cargando poder especial (mientras los sostengas)
+    handIn.charging = true;
+    prev.fist = false; prev.open = false;
+  } else if (bothOpen) {
+    // Dos manos abiertas: lanzar especial (solo al abrirlas)
+    if (!prev.open) pend.especial = true;
+    prev.open = true; prev.fist = false;
+  } else {
+    // Un puño: golpe básico
+    prev.open = false;
+    if (fists[0] && !prev.fist) pend.golpe = true;
+    prev.fist = fists[0];
+  }
+
+  // Pellizco (pulgar + índice): disparo
+  const d = Math.hypot(main[4].x - main[8].x, main[4].y - main[8].y);
+  const pinch = d < 0.05 && !fists[0];
+  if (pinch && !prev.pinch) pend.disparo = true;
+  prev.pinch = pinch;
+}
+
+function getControls() {
+  if (mode === 'hand') {
+    const c = { l: handIn.move < 0, r: handIn.move > 0, jump: pend.jump, golpe: pend.golpe,
+                especial: pend.especial, disparo: pend.disparo, def: false, holdX: handIn.charging };
+    pend = { golpe: false, disparo: false, especial: false, jump: false };
+    return c;
+  }
+  return {
+    l: keys['arrowleft'] || keys['a'], r: keys['arrowright'] || keys['d'],
+    jump: just['arrowup'] || just['w'], golpe: just['z'], especial: just['x'],
+    disparo: just['s'], def: keys['c'], holdX: keys['x']
+  };
+}
+
+function act(f, name, frames) { f.act = name; f.lock = frames; }
+
+function move(f) {
+  f.vy += G;
+  f.y += f.vy;
+  if (f.y >= FLOOR - f.h) { f.y = FLOOR - f.h; f.vy = 0; f.onG = true; }
+  f.x += f.vx;
+  f.x = Math.max(0, Math.min(W - f.w, f.x));
+}
+
+function hurtEnemy(e, d) {
+  e.hp = Math.max(0, e.hp - d);
+  e.hit = 10;
+  state.fab.power = Math.min(100, state.fab.power + 3);
+}
+
+function damageFab(d) {
+  const f = state.fab;
+  if (f.defending) d *= 0.5;
+  f.hp = Math.max(0, f.hp - d);
+  f.hit = 10;
+  if (f.hp <= 0) {
+    state.over = true; state.won = false;
+    statusP.textContent = '¡La mugre te ganó esta vez! (pulsa R o Reiniciar)';
+  }
+}
+
+function update() {
+  const f = state.fab;
+  const c = getControls();
+
+  // Jugador
+  f.vx = 0;
+  if (c.l) { f.vx = -4; f.face = -1; }
+  if (c.r) { f.vx = 4; f.face = 1; }
+  f.defending = !!c.def && f.onG && f.lock <= 0;
+  f.cargando = !!c.holdX && f.power < 100 && f.onG && f.lock <= 0 && !f.defending;
+  if (c.jump && f.onG && f.lock <= 0) { f.vy = -14; f.onG = false; }
+
+  if (c.golpe && f.lock <= 0 && !f.defending) {
+    act(f, 'golpe', 16);
+    state.enemies.forEach(e => {
+      if (Math.abs(e.x - f.x) < 140 && Math.abs(e.y - f.y) < 80) {
+        hurtEnemy(e, 10);
+        f.power = Math.min(100, f.power + 5);
+      }
+    });
+  }
+  if (c.especial && f.power >= 100 && f.lock <= 0) {
+    act(f, 'especial', 40);
+    f.power = 0;
+    state.enemies.forEach(e => { if (Math.abs(e.x - f.x) < 300) hurtEnemy(e, 25); });
+  }
+  if (c.disparo && f.lock <= 0 && !f.defending) {
+    act(f, 'disparo', 18);
+    state.proj.push({ x: f.face > 0 ? f.x + f.w : f.x - 20, y: f.y + 60, vx: f.face * 9, dmg: 12, life: 90, owner: 'fab' });
+  }
+
+  f.lock--;
+  f.hit--;
+  f.power = Math.min(100, f.power + (f.cargando ? 0.3 : 0.08));
+  move(f);
+
+  // Enemigos: los tres actúan a la vez
+  state.enemies = state.enemies.filter(e => e.hp > 0);
+  state.enemies.forEach(e => {
+    const dx = f.x - e.x, dist = Math.abs(dx);
+    e.face = dx > 0 ? 1 : -1;
+    e.lock--; e.hit--;
+    if (e.cd > 0) e.cd--;
+    e.vx = (e.lock <= 0 && e.hit <= 0 && dist > e.range) ? Math.sign(dx) * e.speed : 0;
+    if (e.onG && e.lock <= 0 && Math.random() < 0.006) { e.vy = -12; e.onG = false; }
+    if (e.cd <= 0 && e.lock <= 0 && dist < 130 && Math.random() < e.aggr) {
+      act(e, 'ataque', 22);
+      e.cd = e.cdMax;
+      e.pendingHit = 12;
+    }
+    if (e.pendingHit > 0) {
+      e.pendingHit--;
+      if (e.pendingHit === 0 && dist < 150 && !state.over) damageFab(e.dmg);
+    }
+    move(e);
+  });
+
+  // Proyectiles
+  state.proj.forEach(p => {
+    p.x += p.vx; p.life--;
+    if (p.owner === 'fab') {
+      state.enemies.forEach(e => {
+        if (p.life > 0 && Math.abs(p.x - (e.x + e.w / 2)) < e.w / 2 + 10 && Math.abs(p.y - (e.y + e.h / 2)) < e.h / 2) {
+          hurtEnemy(e, p.dmg);
+          p.life = 0;
+        }
+      });
+    }
+  });
+  state.proj = state.proj.filter(p => p.life > 0 && p.x > -20 && p.x < W + 20);
+
+  if (state.enemies.length === 0 && !state.over) {
+    state.over = true; state.won = true;
+    statusP.textContent = '¡FABULOSO! Limpiaste toda la mugre (pulsa R o Reiniciar)';
+  } else if (!state.over) {
+    statusP.textContent = `Enemigos restantes: ${state.enemies.length}`;
+  }
+}
+
+function fighterState(f) {
+  if (f.hit > 0) return 'hurt';
+  if (f.lock > 0) return f.act;
+  if (f.defending) return 'defensa';
+  if (f.cargando) return 'cargando';
+  return f.onG ? 'idle' : 'salto';
+}
+
+function drawFighter(f, flip) {
+  const isFab = f.prefix === 'fab';
+  let key = f.prefix + '_' + fighterState(f);
+  if (!IMG[key] || !IMG[key].complete || IMG[key].naturalWidth === 0) key = f.prefix + '_idle';
+  const img = IMG[key];
+  ctx.save();
+  let x = f.x;
+  if (flip) { ctx.translate(x + f.w, 0); ctx.scale(-1, 1); x = 0; }
+  if (img && img.complete && img.naturalWidth > 0) {
+    ctx.drawImage(img, x, f.y, f.w, f.h);
+  } else {
+    ctx.fillStyle = isFab ? '#8e44ad' : (f.cfg ? f.cfg.color : '#555');
+    ctx.fillRect(x, f.y, f.w, f.h);
+  }
+  ctx.restore();
+  if (!isFab) {
+    ctx.fillStyle = '#fff'; ctx.font = '13px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(f.cfg.name, f.x + f.w / 2, f.y - 6);
+  }
+}
+
+function drawBg() {
+  const bg = IMG.bg;
+  if (bg && bg.complete && bg.naturalWidth > 0) {
+    ctx.drawImage(bg, 0, 0, W, H);
+  } else {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#2b1d3d'); g.addColorStop(1, '#4a3566');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#e8e8ef'; ctx.fillRect(0, FLOOR, W, H - FLOOR);
+  }
+}
+
+function drawBar(x, y, w, val, max, color) {
+  ctx.fillStyle = '#000'; ctx.fillRect(x, y, w, 14);
+  ctx.fillStyle = color; ctx.fillRect(x, y, w * Math.max(0, val) / max, 14);
+  ctx.strokeStyle = '#fff'; ctx.strokeRect(x, y, w, 14);
+}
+
+function drawHUD() {
+  const f = state.fab;
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'left';
+  ctx.fillText('Fabulosín', 20, 18);
+  drawBar(20, 24, 260, f.hp, f.max, '#a569bd');
+  ctx.fillText(f.power >= 100 ? 'Poder: LISTO (abre las manos / X)' : 'Poder', 20, 56);
+  drawBar(20, 62, 260, f.power, 100, '#f4d03f');
+  ctx.textAlign = 'right';
+  ctx.fillText('Mugre', W - 20, 18);
+  state.enemies.forEach((e, i) => {
+    ctx.fillText(e.cfg.name, W - 20, 40 + i * 30);
+    drawBar(W - 280, 26 + i * 30, 260, e.hp, e.cfg.hp, '#e74c3c');
+  });
+  ctx.textAlign = 'left';
+}
+
+function drawPreview() {
+  if (mode === 'hand' && video.readyState >= 2) {
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.translate(170, H - 130);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, 160, 120);
+    ctx.restore();
+  }
+}
+
+function drawOverlay() {
+  if (!state.over) return;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = state.won ? '#f9e79f' : '#e74c3c';
+  ctx.font = 'bold 40px Arial'; ctx.textAlign = 'center';
+  ctx.fillText(state.won ? '¡FABULOSO!' : 'GAME OVER', W / 2, H / 2);
+  ctx.fillStyle = '#fff'; ctx.font = '16px Arial';
+  ctx.fillText('Pulsa R o Reiniciar para jugar de nuevo', W / 2, H / 2 + 36);
+}
+
+function draw() {
+  drawBg();
+  if (!state) return;
+  state.enemies.forEach(e => drawFighter(e, false));
+  drawFighter(state.fab, state.fab.face < 0);
+  state.proj.forEach(p => {
+    ctx.fillStyle = 'rgba(200,160,255,0.9)';
+    ctx.beginPath(); ctx.ellipse(p.x, p.y, 14, 8, 0, 0, Math.PI * 2); ctx.fill();
+  });
+  drawHUD();
+  drawPreview();
+  drawOverlay();
+}
+
+function loop() {
+  if (state && !state.over) update();
+  // Las teclas "recién pulsadas" se limpian siempre, incluso si el juego terminó
+  for (const k in just) delete just[k];
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
