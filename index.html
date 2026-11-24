@@ -369,9 +369,59 @@ function update() {
   f.power = Math.min(100, f.power + (f.cargando ? 0.3 : 0.08));
   move(f);
 
-  // Los tres enemigos actúan a la vez
+ // Roles: el que tiene más vida ataca, el segundo espera, el tercero se aleja
   state.enemies = state.enemies.filter(e => e.hp > 0);
+  const roster = [...state.enemies].sort((a, b) => b.hp - a.hp);
+  roster.forEach((e, i) => { e.role = i === 0 ? 'ataca' : (i === 1 ? 'espera' : 'aleja'); });
+
   state.enemies.forEach(e => {
+    const dx = f.x - e.x, dist = Math.abs(dx);
+    e.face = dx > 0 ? 1 : -1;
+    e.lock--; e.hit--;
+    if (e.cd > 0) e.cd--;
+
+    // A dónde quiere ir cada enemigo según su rol
+    const side = e.x < f.x ? -1 : 1;
+    let tx;
+    if (e.role === 'ataca') tx = f.x - e.face * 100 * CHAR;      // se acerca y pelea
+    else if (e.role === 'espera') tx = f.x + side * 260 * CHAR;   // espera a distancia
+    else tx = f.x > W / 2 ? 20 : W - FW - 20;                     // se aleja a una esquina
+
+    // Separación: los enemigos se empujan para no amontonarse
+    let sep = 0;
+    state.enemies.forEach(o => {
+      if (o === e) return;
+      const od = e.x - o.x;
+      if (Math.abs(od) < 170 * CHAR) sep += Math.sign(od || 1);
+    });
+
+    const want = tx - e.x;
+    let vx = Math.abs(want) > 6 ? Math.sign(want) * e.speed : 0;
+    vx += sep * 0.8;
+    vx = Math.max(-e.speed * 1.5, Math.min(e.speed * 1.5, vx));
+    e.vx = (e.lock <= 0 && e.hit <= 0) ? vx : 0;
+
+    // Salto aleatorio solo para el que ataca
+    if (e.role === 'ataca' && e.onG && e.lock <= 0 && Math.random() < 0.006) { e.vy = -12; e.onG = false; }
+
+    // Ataques según rol
+    if (e.cd <= 0 && e.lock <= 0 && !state.over) {
+      const atacar =
+        (e.role === 'ataca' && dist < 130 * CHAR && Math.random() < e.aggr) ||
+        (e.role === 'espera' && dist < 150 * CHAR && Math.random() < e.aggr * 0.6); // solo si te acercas
+      if (atacar) {
+        act(e, 'ataque', 22);
+        e.cd = e.cdMax;
+        e.pendingHit = 12;
+      }
+    }
+
+    if (e.pendingHit > 0) {
+      e.pendingHit--;
+      if (e.pendingHit === 0 && dist < 150 * CHAR && !state.over) damageFab(e.dmg);
+    }
+    move(e);
+  });
     const dx = f.x - e.x, dist = Math.abs(dx);
     e.face = dx > 0 ? 1 : -1;
     e.lock--; e.hit--;
@@ -388,7 +438,7 @@ function update() {
       if (e.pendingHit === 0 && dist < 150 * CHAR && !state.over) damageFab(e.dmg);
     }
     move(e);
-  });
+  };
 
   state.proj.forEach(p => {
     p.x += p.vx; p.life--;
@@ -407,7 +457,6 @@ function update() {
   } else if (!state.over) {
     statusP.textContent = `Enemigos restantes: ${state.enemies.length}`;
   }
-}
 
 function fighterState(f) {
   if (f.hit > 0) return 'hurt';
