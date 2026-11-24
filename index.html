@@ -9,16 +9,16 @@
   canvas#game { border:6px solid #8e44ad; border-radius:16px; display:block; width:1600px; height:900px; }
 #menu {
   position:absolute; left:0; top:0; width:1600px; height:900px; box-sizing:border-box;
-  background: linear-gradient(rgba(18,10,28,0.45), rgba(18,10,28,0.75)), url('assets/Menu_background.png') center / cover no-repeat;
-  display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:16px;
-  }
-  #menu-title { font-size:68px; color:#c39bff; text-shadow:0 0 24px #8e44ad; margin:0 0 16px; }
-  #menu-sub { font-size:30px; color:#bba9d6; margin:0 0 48px; }
-  button { margin:8px; padding:18px 36px; background:#3a2350; color:#fff; border:4px solid #8e44ad; border-radius:12px; font-weight:bold; cursor:pointer; font-size:28px; }
-  button:hover { background:#8e44ad; }
-  button.sel { background:#8e44ad; border-color:#f4d03f; }
-  #pelea-btn { font-size:52px; padding:24px 100px; margin-top:40px; background:#8e44ad; border-color:#f4d03f; }
-  #menu-help { font-size:24px; color:#8f7fb0; margin-top:36px; }
+  background: url('assets/Menu_background.png') center / cover no-repeat;
+  border-radius:16px;
+}
+#menu-inner {
+  position:absolute; left:35%; top:68%; width:30%; height:30%;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+}
+#menu button.mode { font-size:24px; padding:14px 20px; margin:4px; }
+#pelea-btn { font-size:48px; padding:18px 70px; margin:6px 0 0; background:#8e44ad; border-color:#f4d03f; }
+#menu-help { font-size:20px; color:#bba9d6; margin:4px 0 0; }
   #bottom-row { display:flex; align-items:center; justify-content:center; gap:40px; margin:24px auto 0; max-width:1600px; }
   #track { width:480px; height:360px; border:4px solid #8e44ad; border-radius:12px; display:none; background:#000; }
   #controls-p { font-size:24px; color:#bba9d6; line-height:1.6; text-align:left; max-width:1000px; margin:0; }
@@ -31,15 +31,14 @@
 <div id="wrap">
   <canvas id="game" width="1600" height="900"></canvas>
 
-  <div id="menu">
-    <h1 id="menu-title">Fabulosín vs. Los Tres Cochineros</h1>
-    <p id="menu-sub">Fabulosín contra Lodo, Huellas y Derrame: ¡los tres atacan a la vez!</p>
+<div id="menu">
+  <div id="menu-inner">
     <div>
       <button id="mode-kb" class="mode sel">⌨️ Teclado</button>
-      <button id="mode-hand" class="mode">🖐️ Manos (cámara)</button>
+      <button id="mode-hand" class="mode">🖐️ Manos</button>
     </div>
     <button id="pelea-btn">PELEA</button>
-    <p id="menu-help">M = volver a este menú · R = reiniciar la pelea</p>
+    <p id="menu-help">M = menú · R = reiniciar</p>
   </div>
 </div>
 
@@ -404,7 +403,7 @@ function update() {
 
   if (state.enemies.length === 0 && !state.over) {
     state.over = true; state.won = true;
-    statusP.textContent = '¡FABULOSO! Ahora tienes 24hrs. de fragancia (R reinicia · M menú)';
+    statusP.textContent = '¡1,2,3... Activos de fragancia! Ahora tienes 24hrs. de fragancia (R reinicia · M menú)';
   } else if (!state.over) {
     statusP.textContent = `Enemigos restantes: ${state.enemies.length}`;
   }
@@ -515,7 +514,7 @@ function draw() {
     ctx.textAlign = 'center';
     if (state.won) {
       ctx.fillStyle = '#f9e79f'; ctx.font = 'bold 44px Arial';
-      ctx.fillText('¡FABULOSO!', W / 2, H / 2 - 20);
+      ctx.fillText('!', W / 2, H / 2 - 20);
       ctx.fillStyle = '#ffffff'; ctx.font = 'bold 26px Arial';
       ctx.fillText('Ahora tienes 24hrs. de fragancia', W / 2, H / 2 + 22);
     } else {
