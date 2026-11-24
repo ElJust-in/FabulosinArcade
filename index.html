@@ -1,30 +1,53 @@
-<html lang="es" data-type="html" data-identifier="f7c2a9e1-3b4d-4e8a-8f2b-6d1c9a0e5b72" data-title="Fabulosín vs la Mugre" data-version="3" width="800" height="620">
+<html lang="es" data-type="html" data-identifier="f7c2a9e1-3b4d-4e8a-8f2b-6d1c9a0e5b72" data-title="Fabulosín vs. Los Tres Cochineros" data-version="4" width="800" height="640">
 <head>
 <meta charset="UTF-8">
-<title>Fabulosín vs la Mugre</title>
+<title>Fabulosín vs. Los Tres Cochineros</title>
 <style>
   body { margin:0; background:#120a1c; color:#fff; font-family: Arial, sans-serif; text-align:center; }
-  #title-h1 { margin:12px 0 4px; font-size:26px; color:#c39bff; text-shadow:0 0 10px #8e44ad; }
-  #status-p { margin:0 0 8px; font-size:15px; min-height:20px; }
+  #status-p { margin:8px 0; font-size:15px; min-height:20px; }
   #controls-p { margin:8px 0 0; font-size:13px; color:#bba9d6; line-height:1.5; }
-  .menu { margin-bottom:8px; }
-  button { margin:4px; padding:8px 16px; background:#8e44ad; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer; }
-  button:hover { background:#a95bcc; }
-  canvas { border:3px solid #8e44ad; border-radius:8px; display:block; margin:0 auto; }
+  #wrap { position:relative; width:800px; height:450px; margin:0 auto; }
+  canvas#game { border:3px solid #8e44ad; border-radius:8px; display:block; }
+  #menu {
+    position:absolute; left:0; top:0; width:800px; height:450px; box-sizing:border-box;
+    background:rgba(18,10,28,0.93); display:flex; flex-direction:column;
+    align-items:center; justify-content:center; border-radius:8px;
+  }
+  #menu-title { font-size:34px; color:#c39bff; text-shadow:0 0 12px #8e44ad; margin:0 0 8px; }
+  #menu-sub { font-size:15px; color:#bba9d6; margin:0 0 24px; }
+  button { margin:4px; padding:9px 18px; background:#3a2350; color:#fff; border:2px solid #8e44ad; border-radius:6px; font-weight:bold; cursor:pointer; font-size:14px; }
+  button:hover { background:#8e44ad; }
+  button.sel { background:#8e44ad; border-color:#f4d03f; }
+  #pelea-btn { font-size:26px; padding:12px 50px; margin-top:20px; background:#8e44ad; border-color:#f4d03f; }
+  #track { position:absolute; left:10px; top:200px; width:240px; height:180px; border:2px solid #8e44ad; border-radius:6px; display:none; }
+  #cam { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+  .ghost { display:none; }
 </style>
 </head>
 <body>
-<h1 id="title-h1">Fabulosín vs. la Mugre</h1>
-<p id="status-p">Elige un modo de juego</p>
-<div class="menu">
-  <button id="kb-btn">⌨️ Teclado</button>
-  <button id="hand-btn">🖐️ Manos (cámara)</button>
-  <button id="restart-btn">Reiniciar</button>
+<p id="status-p">Elige modo y pulsa PELEA</p>
+
+<div id="wrap">
+  <canvas id="game" width="800" height="450"></canvas>
+
+  <div id="menu">
+    <h1 id="menu-title">Fabulosín vs. Los Tres Cochineros</h1>
+    <p id="menu-sub">Fabulosín contra Lodo, Huellas y Derrame: ¡los tres atacan a la vez!</p>
+    <div>
+      <button id="mode-kb" class="mode sel">⌨️ Teclado</button>
+      <button id="mode-hand" class="mode">🖐️ Manos (cámara)</button>
+    </div>
+    <button id="pelea-btn">PELEA</button>
+    <p id="menu-help" style="font-size:12px;color:#8f7fb0;margin-top:18px">M = volver a este menú · R = reiniciar la pelea</p>
+  </div>
+
+  <canvas id="track" width="240" height="180"></canvas>
 </div>
-<canvas id="game" width="800" height="450"></canvas>
-<video id="cam" autoplay playsinline muted style="display:none"></video>
+
+<video id="cam" autoplay playsinline muted></video>
+
 <p id="controls-p">
-  <strong>Teclado:</strong> ← → mover · ↑ saltar · Z golpe · X especial (con poder lleno) · S disparo · C defensa · R reiniciar<br>
+  <strong>Teclado:</strong> ← → mover · ↑ saltar · Z golpe · X especial (con poder lleno) · S disparo · C defensa · R reiniciar · M menú<br>
   <strong>Manos:</strong> mano a los lados = desplazarte · mano arriba = saltar · puño = golpe · pellizco (pulgar + índice) = disparo · mano abierta sostenida = defensa · dos puños = cargar poder · dos manos abiertas = lanzar especial
 </p>
 
@@ -54,9 +77,13 @@ const HAND_CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+const trackCanvas = document.getElementById('track');
+const tctx = trackCanvas.getContext('2d');
 const statusP = document.getElementById('status-p');
 const video = document.getElementById('cam');
+const menuEl = document.getElementById('menu');
 const W = 800, H = 450, FLOOR = 380, G = 0.7;
+const COUNTDOWN_MS = 3600;
 
 const ENEMY_CFG = [
   { prefix: 'Lodo',    name: 'Lodo',    hp: 90,  speed: 1.2, dmg: 8,  cdMax: 90, aggr: 0.04, color: '#7a6a2a', x: 520 },
@@ -64,70 +91,84 @@ const ENEMY_CFG = [
   { prefix: 'derrame', name: 'Derrame', hp: 120, speed: 2.0, dmg: 12, cdMax: 60, aggr: 0.05, color: '#3d3d3d', x: 700 }
 ];
 
-let mode = null, state = null;
+let mode = 'kb';           // 'kb' o 'hand'
+let phase = 'menu';        // 'menu' | 'countdown' | 'fight'
+let state = null, cdStart = 0, handsDetector = null, camBusy = false;
 const keys = {}, just = {};
 let handIn = { move: 0, charging: false, defend: false };
 let pend = { golpe: false, disparo: false, especial: false, jump: false };
 let prev = { fist: false, open: false, pinch: false, jump: false };
 let lastHands = null, gestureText = '';
 
+// ---------- Menú ----------
+function setMode(m) {
+  mode = m;
+  document.getElementById('mode-kb').classList.toggle('sel', m === 'kb');
+  document.getElementById('mode-hand').classList.toggle('sel', m === 'hand');
+  trackCanvas.style.display = m === 'hand' ? 'block' : 'none';
+}
+document.getElementById('mode-kb').addEventListener('click', () => setMode('kb'));
+document.getElementById('mode-hand').addEventListener('click', () => setMode('hand'));
+document.getElementById('pelea-btn').addEventListener('click', () => {
+  if (mode === 'hand') {
+    statusP.textContent = '🖐️ Activando cámara...';
+    startCamera().then(startCountdown).catch(err => {
+      statusP.textContent = 'No pude activar la cámara o el detector de manos. Usa el modo teclado.';
+      console.error(err);
+    });
+  } else {
+    startCountdown();
+  }
+});
+
+function showMenu() {
+  phase = 'menu';
+  menuEl.style.display = 'flex';
+  statusP.textContent = 'Elige modo y pulsa PELEA';
+}
+
+function startCountdown() {
+  reset();
+  pend = { golpe: false, disparo: false, especial: false, jump: false };
+  menuEl.style.display = 'none';
+  phase = 'countdown';
+  cdStart = performance.now();
+  statusP.textContent = '¡Prepárate!';
+}
+
+// ---------- Teclado ----------
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (!keys[k]) just[k] = true;
   keys[k] = true;
   if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
-  if (k === 'r' && mode) reset();
+  if (k === 'r' && phase !== 'menu') startCountdown();
+  if (k === 'm') showMenu();
 });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 
-document.getElementById('kb-btn').addEventListener('click', () => {
-  mode = 'kb'; reset(); statusP.textContent = '⌨️ Modo teclado: ¡a pelear!';
-});
-document.getElementById('hand-btn').addEventListener('click', startHand);
-document.getElementById('restart-btn').addEventListener('click', () => { if (mode) reset(); });
-
-function newFighter(x, prefix, hp) {
-  return { x, y: FLOOR - 150, w: 130, h: 150, vx: 0, vy: 0, onG: true, hp, max: hp, face: 1,
-           prefix, act: 'idle', lock: 0, hit: 0, cd: 0, power: 0,
-           defending: false, cargando: false, pendingHit: 0, cfg: null, range: 100, speed: 0, dmg: 0, cdMax: 0, aggr: 0 };
-}
-
-function reset() {
-  state = {
-    fab: newFighter(120, 'fab', 150),
-    enemies: ENEMY_CFG.map(c => {
-      const e = newFighter(c.x, c.prefix, c.hp);
-      e.cfg = c; e.speed = c.speed; e.dmg = c.dmg; e.cdMax = c.cdMax; e.aggr = c.aggr;
-      return e;
-    }),
-    proj: [], over: false, won: false
-  };
-  statusP.textContent = `Enemigos restantes: ${state.enemies.length}. ¡Los tres atacan a la vez!`;
-}
-
-function startHand() {
-  navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } }).then(async stream => {
+// ---------- Cámara y detector de manos ----------
+async function startCamera() {
+  if (typeof Hands === 'undefined') throw new Error('No cargó la librería de MediaPipe (revisa tu conexión).');
+  if (!video.srcObject) {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
     video.srcObject = stream;
     await video.play();
-    const hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.5 });
-    hands.onResults(onHands);
-    let busy = false;
-    async function sendFrame() {
-      if (!busy && video.readyState >= 2) {
-        busy = true;
-        await hands.send({ image: video });
-        busy = false;
+  }
+  if (!handsDetector) {
+    handsDetector = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+    handsDetector.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.5 });
+    handsDetector.onResults(onHands);
+    const sendFrame = async () => {
+      if (!camBusy && video.readyState >= 2) {
+        camBusy = true;
+        try { await handsDetector.send({ image: video }); } catch (e) { console.error(e); }
+        camBusy = false;
       }
       requestAnimationFrame(sendFrame);
-    }
+    };
     sendFrame();
-    mode = 'hand';
-    reset();
-    statusP.textContent = '🖐️ Modo manos: ¡muestra tus manos a la cámara!';
-  }).catch(() => {
-    statusP.textContent = 'No pude acceder a la cámara. Usa el modo teclado.';
-  });
+  }
 }
 
 function countUp(lm) {
@@ -137,8 +178,38 @@ function isFist(lm) { return countUp(lm) <= 1; }
 function isOpen(lm) { return countUp(lm) >= 4; }
 
 function onHands(res) {
+  // Dibuja la cámara espejada con los puntos de las manos
+  tctx.save();
+  tctx.clearRect(0, 0, 240, 180);
+  tctx.translate(240, 0);
+  tctx.scale(-1, 1);
+  if (res.image) tctx.drawImage(res.image, 0, 0, 240, 180);
+  tctx.restore();
+
   const hs = res.multiHandLandmarks || [];
   lastHands = hs.length ? hs : null;
+  const pt = p => ({ x: (1 - p.x) * 240, y: p.y * 180 });
+
+  hs.forEach((lm, hi) => {
+    tctx.strokeStyle = hi === 0 ? '#00e5ff' : '#ffea00';
+    tctx.lineWidth = 2;
+    HAND_CONNECTIONS.forEach(([a, b]) => {
+      const A = pt(lm[a]), B = pt(lm[b]);
+      tctx.beginPath(); tctx.moveTo(A.x, A.y); tctx.lineTo(B.x, B.y); tctx.stroke();
+    });
+    lm.forEach(p => {
+      const q = pt(p);
+      tctx.fillStyle = '#ff4081';
+      tctx.beginPath(); tctx.arc(q.x, q.y, 3, 0, Math.PI * 2); tctx.fill();
+    });
+  });
+
+  tctx.fillStyle = 'rgba(0,0,0,0.6)';
+  tctx.fillRect(0, 158, 240, 22);
+  tctx.fillStyle = '#fff'; tctx.font = '12px Arial'; tctx.textAlign = 'left';
+  tctx.fillText(gestureText || 'Buscando manos...', 6, 173);
+
+  // Lógica de gestos
   handIn.move = 0;
   handIn.charging = false;
   handIn.defend = false;
@@ -149,11 +220,9 @@ function onHands(res) {
   }
   const main = hs[0];
 
-  // Movimiento lateral (espejo)
   const x = 1 - main[8].x;
   if (x < 0.38) handIn.move = -1; else if (x > 0.62) handIn.move = 1;
 
-  // Salto: mano arriba
   const jumpNow = main[0].y < 0.3;
   if (jumpNow && !prev.jump) pend.jump = true;
   prev.jump = jumpNow;
@@ -165,29 +234,24 @@ function onHands(res) {
   const oneOpen = hs.length === 1 && opens[0];
 
   if (bothFist) {
-    // Dos puños: cargando poder especial
     handIn.charging = true;
     prev.fist = false; prev.open = false;
     gestureText = 'Dos puños: cargando poder';
   } else if (bothOpen) {
-    // Dos manos abiertas: lanzar especial (solo al abrirlas)
     if (!prev.open) pend.especial = true;
     prev.open = true; prev.fist = false;
     gestureText = 'Dos manos abiertas: ¡ESPECIAL!';
   } else if (oneOpen) {
-    // Una mano abierta sostenida: defensa
     handIn.defend = true;
     prev.open = false; prev.fist = false;
     gestureText = 'Mano abierta: defensa';
   } else {
-    // Un puño: golpe básico
     prev.open = false;
     if (fists[0] && !prev.fist) pend.golpe = true;
     prev.fist = fists[0];
     gestureText = fists[0] ? 'Puño: golpe' : 'Mano en movimiento';
   }
 
-  // Pellizco (pulgar + índice): disparo
   const d = Math.hypot(main[4].x - main[8].x, main[4].y - main[8].y);
   const pinch = d < 0.05 && !fists[0];
   if (pinch && !prev.pinch) { pend.disparo = true; gestureText = 'Pellizco: disparo'; }
@@ -205,6 +269,25 @@ function getControls() {
     l: keys['arrowleft'] || keys['a'], r: keys['arrowright'] || keys['d'],
     jump: just['arrowup'] || just['w'], golpe: just['z'], especial: just['x'],
     disparo: just['s'], def: keys['c'], holdX: keys['x']
+  };
+}
+
+// ---------- Juego ----------
+function newFighter(x, prefix, hp) {
+  return { x, y: FLOOR - 150, w: 130, h: 150, vx: 0, vy: 0, onG: true, hp, max: hp, face: 1,
+           prefix, act: 'idle', lock: 0, hit: 0, cd: 0, power: 0,
+           defending: false, blockT: 0, cargando: false, pendingHit: 0, cfg: null, range: 100, speed: 0, dmg: 0, cdMax: 0, aggr: 0 };
+}
+
+function reset() {
+  state = {
+    fab: newFighter(120, 'fab', 150),
+    enemies: ENEMY_CFG.map(c => {
+      const e = newFighter(c.x, c.prefix, c.hp);
+      e.cfg = c; e.speed = c.speed; e.dmg = c.dmg; e.cdMax = c.cdMax; e.aggr = c.aggr;
+      return e;
+    }),
+    proj: [], over: false, won: false
   };
 }
 
@@ -226,13 +309,16 @@ function hurtEnemy(e, d) {
 
 function damageFab(d) {
   const f = state.fab;
-  // Si está defendiendo en el momento del golpe, casi todo el daño se bloquea
-  if (f.defending) d = d * 0.1;
+  if (f.defending) {
+    // Bloqueo total: el golpe no hace daño y aparece el escudo
+    f.blockT = 12;
+    return;
+  }
   f.hp = Math.max(0, f.hp - d);
-  if (!f.defending) f.hit = 10;
+  f.hit = 10;
   if (f.hp <= 0) {
     state.over = true; state.won = false;
-    statusP.textContent = '¡La mugre te ganó esta vez! (pulsa R o Reiniciar)';
+    statusP.textContent = '¡La mugre te ganó esta vez! (R reinicia · M menú)';
   }
 }
 
@@ -240,13 +326,16 @@ function update() {
   const f = state.fab;
   const c = getControls();
 
-  // Jugador
+  // Movimiento
   f.vx = 0;
   if (c.l) { f.vx = -4; f.face = -1; }
   if (c.r) { f.vx = 4; f.face = 1; }
-  f.defending = !!c.def && f.onG && f.lock <= 0;
+
+  // Defensa: se activa mientras la mantengas, incluso en el aire
+  f.defending = !!c.def;
   f.cargando = !!c.holdX && f.power < 100 && f.onG && f.lock <= 0 && !f.defending;
-  if (c.jump && f.onG && f.lock <= 0) { f.vy = -14; f.onG = false; }
+
+  if (c.jump && f.onG && f.lock <= 0 && !f.defending) { f.vy = -14; f.onG = false; }
 
   if (c.golpe && f.lock <= 0 && !f.defending) {
     act(f, 'golpe', 16);
@@ -257,7 +346,7 @@ function update() {
       }
     });
   }
-  if (c.especial && f.power >= 100 && f.lock <= 0) {
+  if (c.especial && f.power >= 100 && f.lock <= 0 && !f.defending) {
     act(f, 'especial', 40);
     f.power = 0;
     state.enemies.forEach(e => { if (Math.abs(e.x - f.x) < 300) hurtEnemy(e, 25); });
@@ -269,6 +358,7 @@ function update() {
 
   f.lock--;
   f.hit--;
+  f.blockT--;
   f.power = Math.min(100, f.power + (f.cargando ? 0.3 : 0.08));
   move(f);
 
@@ -296,20 +386,18 @@ function update() {
   // Proyectiles
   state.proj.forEach(p => {
     p.x += p.vx; p.life--;
-    if (p.owner === 'fab') {
-      state.enemies.forEach(e => {
-        if (p.life > 0 && Math.abs(p.x - (e.x + e.w / 2)) < e.w / 2 + 10 && Math.abs(p.y - (e.y + e.h / 2)) < e.h / 2) {
-          hurtEnemy(e, p.dmg);
-          p.life = 0;
-        }
-      });
-    }
+    state.enemies.forEach(e => {
+      if (p.life > 0 && Math.abs(p.x - (e.x + e.w / 2)) < e.w / 2 + 10 && Math.abs(p.y - (e.y + e.h / 2)) < e.h / 2) {
+        hurtEnemy(e, p.dmg);
+        p.life = 0;
+      }
+    });
   });
   state.proj = state.proj.filter(p => p.life > 0 && p.x > -20 && p.x < W + 20);
 
   if (state.enemies.length === 0 && !state.over) {
     state.over = true; state.won = true;
-    statusP.textContent = '¡FABULOSO! Limpiaste toda la mugre (pulsa R o Reiniciar)';
+    statusP.textContent = '¡FABULOSO! Limpiaste toda la mugre (R reinicia · M menú)';
   } else if (!state.over) {
     statusP.textContent = `Enemigos restantes: ${state.enemies.length}`;
   }
@@ -317,8 +405,8 @@ function update() {
 
 function fighterState(f) {
   if (f.hit > 0) return 'hurt';
-  if (f.lock > 0) return f.act;
   if (f.defending) return 'defensa';
+  if (f.lock > 0) return f.act;
   if (f.cargando) return 'cargando';
   return f.onG ? 'idle' : 'salto';
 }
@@ -338,6 +426,16 @@ function drawFighter(f, flip) {
     ctx.fillRect(x, f.y, f.w, f.h);
   }
   ctx.restore();
+
+  // Escudo azul cuando bloquea
+  if (isFab && (f.defending || f.blockT > 0)) {
+    ctx.save();
+    ctx.globalAlpha = 0.45;
+    ctx.fillStyle = '#4fc3f7';
+    ctx.beginPath(); ctx.ellipse(f.x + f.w / 2, f.y + f.h / 2, 85, 90, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
   if (!isFab) {
     ctx.fillStyle = '#fff'; ctx.font = '13px Arial'; ctx.textAlign = 'center';
     ctx.fillText(f.cfg.name, f.x + f.w / 2, f.y - 6);
@@ -378,57 +476,24 @@ function drawHUD() {
   ctx.textAlign = 'left';
 }
 
-// Cámara con puntos y líneas de las manos
-function drawPreview() {
-  if (mode !== 'hand' || video.readyState < 2) return;
-  const pw = 200, ph = 150, px = 10, py = H - ph - 10;
-
+function drawCountdown() {
+  const el = performance.now() - cdStart;
+  const steps = ['3', '2', '1', '¡TRAPEA!'];
+  const idx = Math.min(steps.length - 1, Math.floor(el / 900));
+  const t = (el % 900) / 900; // progreso dentro de cada número
+  ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, W, H);
+  const size = (idx === 3 ? 70 : 110) * (1.25 - 0.25 * t);
   ctx.save();
-  // Video espejado
-  ctx.save();
-  ctx.translate(px + pw, py);
-  ctx.scale(-1, 1);
-  ctx.drawImage(video, 0, 0, pw, ph);
-  ctx.restore();
-
-  ctx.strokeStyle = '#8e44ad'; ctx.lineWidth = 2;
-  ctx.strokeRect(px, py, pw, ph);
-
-  // Tracking: coordenadas espejadas para coincidir con el video
-  const pt = p => ({ x: px + (1 - p.x) * pw, y: py + p.y * ph });
-  if (lastHands) {
-    lastHands.forEach((lm, hi) => {
-      ctx.strokeStyle = hi === 0 ? '#00e5ff' : '#ffea00';
-      ctx.lineWidth = 2;
-      HAND_CONNECTIONS.forEach(([a, b]) => {
-        const A = pt(lm[a]), B = pt(lm[b]);
-        ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
-      });
-      lm.forEach(p => {
-        const q = pt(p);
-        ctx.fillStyle = '#ff4081';
-        ctx.beginPath(); ctx.arc(q.x, q.y, 3, 0, Math.PI * 2); ctx.fill();
-      });
-    });
-  }
-
-  // Texto con el gesto detectado
-  ctx.fillStyle = 'rgba(0,0,0,0.6)';
-  ctx.fillRect(px, py + ph - 20, pw, 20);
-  ctx.fillStyle = '#fff'; ctx.font = '12px Arial'; ctx.textAlign = 'left';
-  ctx.fillText(gestureText || 'Buscando manos...', px + 6, py + ph - 6);
+  ctx.globalAlpha = Math.min(1, 1.2 - t * 0.4);
+  ctx.fillStyle = idx === 3 ? '#f4d03f' : '#ffffff';
+  ctx.shadowColor = '#8e44ad'; ctx.shadowBlur = 20;
+  ctx.font = `bold ${Math.round(size)}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.fillText(steps[idx], W / 2, H / 2 + size / 3);
   ctx.restore();
 }
 
-function drawOverlay() {
-  if (!state.over) return;
-  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = state.won ? '#f9e79f' : '#e74c3c';
-  ctx.font = 'bold 40px Arial'; ctx.textAlign = 'center';
-  ctx.fillText(state.won ? '¡FABULOSO!' : 'GAME OVER', W / 2, H / 2);
-  ctx.fillStyle = '#fff'; ctx.font = '16px Arial';
-  ctx.fillText('Pulsa R o Reiniciar para jugar de nuevo', W / 2, H / 2 + 36);
-}
+function drawBlockBadge() { /* el escudo se dibuja sobre Fabulosín */ }
 
 function draw() {
   drawBg();
@@ -439,17 +504,32 @@ function draw() {
     ctx.fillStyle = 'rgba(200,160,255,0.9)';
     ctx.beginPath(); ctx.ellipse(p.x, p.y, 14, 8, 0, 0, Math.PI * 2); ctx.fill();
   });
-  drawHUD();
-  drawPreview();
-  drawOverlay();
+  if (phase === 'fight' || state.over) drawHUD();
+  if (phase === 'countdown') drawCountdown();
+  if (phase === 'fight' && state.over) {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = state.won ? '#f9e79f' : '#e74c3c';
+    ctx.font = 'bold 40px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(state.won ? '¡FABULOSO!' : 'GAME OVER', W / 2, H / 2);
+    ctx.fillStyle = '#fff'; ctx.font = '16px Arial';
+    ctx.fillText('R = reiniciar la pelea · M = menú', W / 2, H / 2 + 36);
+  }
 }
 
 function loop() {
-  if (state && !state.over) update();
+  if (phase === 'countdown' && performance.now() - cdStart >= COUNTDOWN_MS) {
+    phase = 'fight';
+    statusP.textContent = `Enemigos restantes: ${state.enemies.length}`;
+  }
+  if (phase === 'fight' && !state.over) update();
+  if (phase !== 'fight') pend = { golpe: false, disparo: false, especial: false, jump: false };
   for (const k in just) delete just[k];
   draw();
   requestAnimationFrame(loop);
 }
+
+setMode('kb');
+showMenu();
 loop();
 </script>
 </body>
